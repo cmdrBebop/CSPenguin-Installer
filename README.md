@@ -1,3 +1,24 @@
+## Локальная установка 5.1.0 с Patch1
+
+Из каталога, где лежат `CSP_510w_setup.exe` и папка `Patch1`, выполните
+
+```sh
+git clone https://github.com/cmdrBebop/CSPenguin-Installer.git
+./CSPenguin-Installer/install.sh --local
+```
+
+Завершите установку в окне Windows, оставив стандартный путь. Скрипт скопирует
+`CLIPStudioPaint.exe` и оба текстовых файла из `Patch1` в каталог программы
+и добавит **Clip Studio Paint** в меню приложений Linux. Исходный EXE сохраняется
+в каталоге программы под именем `CLIPStudioPaint.exe.original`.
+
+Флаг `--local --dry-run` проверяет наличие четырёх файлов и показывает путь
+к ярлыку без запуска Wine. Если репозиторий находится в другом каталоге, задайте
+`CSP_BUNDLE_DIR="/путь/к/папке с установщиком"`.
+Скрипт использует локальный EXE, а зависимости Wine при необходимости скачивает.
+
+[Тема раздачи на форуме ITZMX](https://bbs.itzmx.com/thread-118094-1-1.html)
+
 ![CSP running on Linux](assets/Screenshot_20260318_041049.png)
 
 # video tutorial 👇

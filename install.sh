@@ -6,6 +6,7 @@ SKIP_WINETRICKS=0
 DRY_RUN=0
 UPDATE_WINE=0
 UPDATE_ONLY=0
+LOCAL_BUNDLE=0
 _ESYNC_RESTART=0
 for arg in "$@"; do
     [[ "$arg" == "--verbose"         || "$arg" == "-v" ]] && VERBOSE=1
@@ -13,6 +14,7 @@ for arg in "$@"; do
     [[ "$arg" == "--dry-run"         || "$arg" == "-n" ]] && DRY_RUN=1
     [[ "$arg" == "--update-wine"     || "$arg" == "-w" ]] && UPDATE_WINE=1
     [[ "$arg" == "--update"          || "$arg" == "-u" ]] && UPDATE_ONLY=1
+    [[ "$arg" == "--local" ]] && LOCAL_BUNDLE=1
 done
 
 DOWNLOAD_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/csp-install"
@@ -82,8 +84,6 @@ cleanup() {
     rm -f "$DOWNLOAD_DIR"/*.part 2>/dev/null
     [[ $_install_ok -eq 0 ]] && [[ $UPDATE_ONLY -eq 0 ]] && wineserver -k 2>/dev/null || true
 }
-trap cleanup EXIT
-
 # paths
 _candidate="$(cd "$(dirname "${BASH_SOURCE[0]:-/}")" 2>/dev/null && pwd)"
 if [[ -d "$_candidate/patches" ]]; then
@@ -118,6 +118,48 @@ CSP_INSTALL_PATH="$WINEPREFIX/drive_c/Program Files/CELSYS/CLIP STUDIO 1.5/CLIP 
 STUDIO_EXE="$WINEPREFIX/drive_c/Program Files/CELSYS/CLIP STUDIO 1.5/CLIP STUDIO/CLIPStudio.exe"
 SYS32="$WINEPREFIX/drive_c/windows/system32"
 LOG_FILE="${DOWNLOAD_DIR}/csp-install.log"
+LOCAL_INSTALLER=""
+
+if [[ $LOCAL_BUNDLE -eq 1 ]]; then
+    if [[ $UPDATE_ONLY -eq 1 || $UPDATE_WINE -eq 1 ]]; then
+        printf '%s\n' '--local cannot be combined with --update or --update-wine' >&2
+        exit 1
+    fi
+    bundle_dir=${CSP_BUNDLE_DIR:-"$_candidate/.."}
+    bundle_dir="$(realpath -m -- "$bundle_dir")"
+    LOCAL_INSTALLER="$bundle_dir/CSP_510w_setup.exe"
+    patch_files=(
+        "$bundle_dir/Patch1/CLIPStudioPaint.exe"
+        "$bundle_dir/Patch1/Anti-Resale. Proudly brought to you by bbs.itzmx.com. This patch is absolutely free! Please do not purchase it.txt"
+        "$bundle_dir/Patch1/【防倒卖】bbs.itzmx.com荣誉出品。本补丁完全免费！请勿购买！如发现贩卖，请退款差评举报！.txt"
+    )
+    for bundle_file in "$LOCAL_INSTALLER" "${patch_files[@]}"; do
+        if [[ ! -f "$bundle_file" || ! -r "$bundle_file" || ! -s "$bundle_file" ]]; then
+            printf 'Missing or unreadable bundle file: %s\n' "$bundle_file" >&2
+            exit 1
+        fi
+    done
+    if [[ $DRY_RUN -eq 1 ]]; then
+        printf 'Local installer: %s\nPatch files: %s\n' "$LOCAL_INSTALLER" "${patch_files[0]%/*}"
+        printf 'Application menu entry: %s\n' "$HOME/.local/share/applications/clipstudiopaint.desktop"
+        exit 0
+    fi
+fi
+trap cleanup EXIT
+
+_apply_local_patch() (
+    local app_dir="${CSP_INSTALL_PATH%/*}"
+    local staged_exe
+    staged_exe="$(mktemp -- "$app_dir/.CLIPStudioPaint.XXXXXX")"
+    trap 'rm -f -- "$staged_exe"' EXIT
+    cp -- "${patch_files[0]}" "$staged_exe"
+    chmod --reference="$CSP_INSTALL_PATH" "$staged_exe"
+    cp -- "${patch_files[@]:1}" "$app_dir/"
+    if ! cmp -s -- "$staged_exe" "$CSP_INSTALL_PATH"; then
+        cp --preserve=mode -- "$CSP_INSTALL_PATH" "$CSP_INSTALL_PATH.original"
+    fi
+    mv -fT -- "$staged_exe" "$CSP_INSTALL_PATH"
+)
 
 # helpers
 run() {
@@ -727,12 +769,12 @@ for _MATS_DIR in "\$_CSP_USER/Documents/CELSYS" "\$_CSP_USER/AppData/Roaming/CEL
 done
 wait
 
-if [[ -n "\$1" ]] && command -v winepath &>/dev/null; then
-    WIN_PATH="\$(WINEPREFIX="$WINEPREFIX" winepath --windows "\$1")"
-    wine "\$CSP_EXE" "\$WIN_PATH" &
-else
-    wine "\$CSP_EXE" &
+args=()
+if [[ -n "\${1:-}" ]] && command -v winepath &>/dev/null; then
+    args+=("\$(winepath --windows "\$1")")
 fi
+cd -- "\${CSP_EXE%/*}" || exit 1
+wine "\$CSP_EXE" "\${args[@]}" &
 WINE_PID=\$!
 
 if command -v wmctrl &>/dev/null && command -v xprop &>/dev/null; then
@@ -1101,6 +1143,10 @@ echo -e "      /'\_   _/\`\\  ${DIM}once or twice to install packages${RESET}"
 echo -e "      \___)=(___/  ${DIM}and set system limits.${RESET}"
 echo ""
 echo ""
+CSP_URL=""
+if [[ $LOCAL_BUNDLE -eq 1 ]]; then
+    info "selected: Clip Studio Paint 5.1.0 from $LOCAL_INSTALLER"
+else
 echo -e "  ${BOLD}Which version of Clip Studio Paint?${RESET}"
 echo "    1) 5.1.2 (latest)"
 echo "    2) 5.0.4 (perpetual)"
@@ -1154,6 +1200,7 @@ if [[ "$CSP_VERSION" != "custom" ]]; then
     CSP_URL="https://vd.clipstudio.net/clipcontent/paint/app/${CSP_VERSION}/CSP_${CSP_VERSION}w_setup.exe"
     CSP_EXE_NAME="CSP_${CSP_VERSION}w_setup.exe"
 fi
+fi # end version selection
 # [1/7] dependencies
 
 step "dependencies"
@@ -1431,13 +1478,18 @@ else
     read -rp "press enter to continue..." </dev/tty
     info "CSP installer running, come back when done..."
     env WINEDEBUG=-all WINEDLLOVERRIDES="winemenubuilder.exe=d" \
-        wine "$DOWNLOAD_DIR/$CSP_EXE_NAME" >> "$LOG_FILE" 2>&1 &
+        wine "${LOCAL_INSTALLER:-$DOWNLOAD_DIR/$CSP_EXE_NAME}" >> "$LOG_FILE" 2>&1 &
     wait $! || die "CSP installer failed"
     [[ -f "$CSP_INSTALL_PATH" ]] || die "CSP not found after install, did you complete the installer?"
 
-    find "$HOME/.local/share/applications" -name "*CLIP STUDIO PAINT*.desktop" -delete 2>/dev/null || true
-    find "$HOME/Desktop" -name "*CLIP STUDIO PAINT*.desktop" -delete 2>/dev/null || true
-    ok "Removed installer-generated launchers"
+    if [[ $LOCAL_BUNDLE -eq 1 ]]; then
+        _apply_local_patch
+        ok "Patch1"
+    else
+        find "$HOME/.local/share/applications" -name "*CLIP STUDIO PAINT*.desktop" -delete 2>/dev/null || true
+        find "$HOME/Desktop" -name "*CLIP STUDIO PAINT*.desktop" -delete 2>/dev/null || true
+        ok "Removed installer-generated launchers"
+    fi
 
     ok "Clip Studio Paint"
 
@@ -1500,7 +1552,7 @@ mkdir -p "$HOME/.local/share/applications"
 cat > "$DESKTOP_FILE" << EOF
 [Desktop Entry]
 Name=Clip Studio Paint
-Exec=$LAUNCH_SCRIPT %f
+Exec="$LAUNCH_SCRIPT" %f
 Terminal=false
 Type=Application
 Categories=Graphics;
@@ -1512,7 +1564,7 @@ EOF
 cat > "$DESKTOP_STUDIO" << EOF
 [Desktop Entry]
 Name=CLIP STUDIO
-Exec=$LAUNCHER_STUDIO
+Exec="$LAUNCHER_STUDIO"
 Terminal=false
 Type=Application
 Categories=Graphics;
