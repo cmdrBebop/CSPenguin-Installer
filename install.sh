@@ -412,12 +412,12 @@ download_progress() {
         | tail -1 | tr -d '\r' || true)
     local tmp="${dest}.part"
     if [[ -z "$total" ]] || ! [[ "$total" =~ ^[0-9]+$ ]] || [[ "$total" -eq 0 ]]; then
-        wait_for "$name" wget -q --timeout=30 --tries=3 -O "$tmp" "$url"
+        wait_for "$name" wget -nv --timeout=30 --tries=3 -O "$tmp" "$url"
         mv "$tmp" "$dest"
         return
     fi
     info "$name"
-    wget -q --timeout=30 --tries=3 -O "$tmp" "$url" &
+    wget -nv --timeout=30 --tries=3 -O "$tmp" "$url" >> "$LOG_FILE" 2>&1 &
     local pid=$!
     local bw=30 current=0 pct=0 filled=0 empty=0
     while kill -0 "$pid" 2>/dev/null; do
@@ -1317,6 +1317,11 @@ fi
 
 if [[ $_need_wine -eq 1 ]] && [[ $DRY_RUN -eq 0 ]]; then
     _extract_wine "$_wine_tar"
+fi
+if [[ $DRY_RUN -eq 0 ]] && {
+    [[ ! -s "$FREETYPE_DIR/lib64/libfreetype.so.6" ]] ||
+    [[ ! -s "$FREETYPE_DIR/lib32/libfreetype.so.6" ]];
+}; then
     _bundle_freetype
 fi
 
